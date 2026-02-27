@@ -151,7 +151,7 @@ while keep_going:
     print(now)
 
     # 예약 시도
-    if now.hour == 14 and now.minute == 33 and (now.second >= 0 and now.second <= 10):
+    if now.hour == 9 and now.minute == 0 and (now.second >= 0 and now.second <= 10):
         print("일찍 새로고침!")
         driver.refresh()
         time.sleep(random.uniform(0.6, 1))
