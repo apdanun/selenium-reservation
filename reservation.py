@@ -10,12 +10,21 @@ import time
 import pytz
 import subprocess
  
- # 실행파일 경로로 크롬 실행
-subprocess.Popen([
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "--remote-debugging-port=9222",
-    "--user-data-dir=./chromeCookie"
-])
+ # 실행파일 경로로 크롬 실행 (이미 실행 중이면 건너뜀)
+import socket
+def is_port_open(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+if not is_port_open(9222):
+    subprocess.Popen([
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "--remote-debugging-port=9222",
+        "--user-data-dir=./chromeCookie",
+        "--no-first-run",
+        "--no-default-browser-check"
+    ])
+    time.sleep(3)  # Chrome이 디버깅 포트를 열 때까지 대기
 
 option = Options()
 option.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
@@ -28,8 +37,18 @@ option.add_argument("--lang=ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
 # 자동화 탐지 방지
 #option.add_argument("disable-blink-features=AutomationControlled")
 
-driver = webdriver.Chrome(options=option)
-driver.maximize_window()
+for attempt in range(5):
+    try:
+        driver = webdriver.Chrome(options=option)
+        break
+    except Exception:
+        print(f"Chrome 연결 재시도 ({attempt + 1}/5)...")
+        time.sleep(2)
+
+try:
+    driver.maximize_window()
+except Exception:
+    pass  # 이미 열린 창이면 maximize 실패할 수 있음
 
 # ChromeDriver 경로 설정 (다운로드 폴더에 있는 chromedriver)
 # service = Service()
@@ -37,6 +56,23 @@ driver.maximize_window()
 # WebDriver에 Service 객체 전달
 # driver = webdriver.Chrome(service=service)
  
+# 예약 사이트 열기
+# 내곡 217811
+# 양재 210031
+BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/217811/items/7477748'
+FIRST_DATE = '2026-04-05'
+SECOND_DATE = '2026-04-12'
+TARGET_URL = f'{BASE_URL}?startDate={FIRST_DATE}'
+# 기존 탭 정리: 첫 번째 탭만 남기고 나머지 닫기
+handles = driver.window_handles
+if len(handles) > 1:
+    for handle in handles[1:]:
+        driver.switch_to.window(handle)
+        driver.close()
+    driver.switch_to.window(handles[0])
+else:
+    driver.switch_to.window(handles[0])
+
 driver.execute_cdp_cmd(
     "Page.addScriptToEvaluateOnNewDocument",
     {
@@ -49,13 +85,12 @@ driver.execute_cdp_cmd(
     }
 )
 
-# 예약 사이트 열기
-# 내곡 217811 → section[2]
-# 양재 210031 → section[3]
-# SECTION = 2
-# driver.get('https://m.booking.naver.com/booking/10/bizes/217811/items/7409707?startDate=2026-03-17')
-SECTION = 3
-driver.get('https://m.booking.naver.com/booking/10/bizes/210031/items/7458024?startDate=2026-04-05')
+# URL 이동
+driver.get(TARGET_URL)
+WebDriverWait(driver, 10).until(
+    lambda d: d.execute_script("return document.readyState") == "complete"
+)
+print(f"현재 URL: {driver.current_url}")
  
 # 서울 시간대 설정
 seoul_tz = pytz.timezone('Asia/Seoul')
@@ -77,33 +112,53 @@ def click_button(xpath, wait=1):
         EC.element_to_be_clickable((By.XPATH, xpath))
     ).click()
 
-def do_reservation(section):
+# 우선순위 희망 시간대 (시작시, 끝시) - 이 슬롯들을 먼저 시도하고, 없으면 나머지 시간대 순차 탐색
+PREFERRED_SLOTS = [
+    (9, 11),
+    (10, 12),
+]
+SLOT_HOURS = 2      # 연속 예약 시간 수
+RANGE_START = 6     # 전체 예약 가능 시작 시간
+RANGE_END = 17      # 전체 예약 가능 끝 시간 (17시 시작 슬롯까지 → 17~19)
+EXCLUDE_HOURS = set(range(11, 13))  # 제외할 시간 (11시, 12시 → 점심시간)
+
+def do_reservation():
     """시간 선택 → 다음 → 결제창 버튼 클릭까지 수행. 성공 시 True 반환."""
-    # 오후 1시~6시 중 연속 2시간 예약 가능한 슬롯 찾기
-    # li[8]=13시, li[9]=14시, li[10]=15시, li[11]=16시, li[12]=17시, li[13]=18시
-    base_xpath = f'/html/body/div[1]/main/section[{section}]/div/div[2]/div[2]/div/div[2]/ul'
-    time_slots = []
-    for li_idx in range(8, 14):  # li[8](13시) ~ li[13](18시)
-        xpath = f'{base_xpath}/li[{li_idx}]/button'
-        hour = li_idx + 5
-        time_slots.append((hour, li_idx, xpath))
+    # li 인덱스 = hour - 5 (li[1]=6시, li[2]=7시, li[3]=8시, ...)
+    base_xpath = '/html/body/div[1]/main/section[2]/div/div[2]/div[2]/div/div[2]/ul'
 
-    # 연속 2시간 가능한 쌍 찾기 (13-14, 14-15, 15-16, 16-17, 17-18)
-    selected_pair = None
-    for i in range(len(time_slots) - 1):
-        hour1, _, xpath1 = time_slots[i]
-        hour2, _, xpath2 = time_slots[i + 1]
-        if is_time_button_available(xpath1, wait=3) and is_time_button_available(xpath2, wait=1):
-            selected_pair = (hour1, hour2, xpath1, xpath2)
-            print(f"{hour1}시~{hour2 + 1}시 예약 가능! 선택합니다.")
+    # 우선순위 슬롯 + 나머지 시간대 순차 목록 생성 (중복 제거)
+    all_slots = [
+        (h, h + SLOT_HOURS) for h in range(RANGE_START, RANGE_END + 1)
+        if not set(range(h, h + SLOT_HOURS)) & EXCLUDE_HOURS
+    ]
+    preferred_set = set(PREFERRED_SLOTS)
+    remaining = [s for s in all_slots if s not in preferred_set]
+    slots_to_try = list(PREFERRED_SLOTS) + remaining
+
+    selected_xpaths = None
+    for start_hour, end_hour in slots_to_try:
+        hours = list(range(start_hour, end_hour))
+        xpaths = [f'{base_xpath}/li[{h - 5}]/button' for h in hours]
+
+        all_available = True
+        for idx, xp in enumerate(xpaths):
+            if not is_time_button_available(xp, wait=3 if idx == 0 else 1):
+                all_available = False
+                break
+
+        if all_available:
+            print(f"{start_hour}시~{end_hour}시 예약 가능! 선택합니다.")
+            selected_xpaths = xpaths
             break
+        else:
+            print(f"{start_hour}시~{end_hour}시 불가")
 
-    if selected_pair:
-        _, _, xpath1, xpath2 = selected_pair
-        click_button(xpath1)
-        click_button(xpath2)
+    if selected_xpaths:
+        for xp in selected_xpaths:
+            click_button(xp)
     else:
-        print("오후 1시~6시 중 연속 2시간 예약 가능한 슬롯이 없습니다.")
+        print("희망 시간대 중 예약 가능한 슬롯이 없습니다.")
         return False
 
     print("시간 버튼 클릭 완료")
@@ -139,9 +194,7 @@ def do_reservation(section):
     next_button.click()
     return True
 
-# 두 번째 예약 정보
-SECOND_URL = 'https://m.booking.naver.com/booking/10/bizes/210031/items/7458029?startDate=2026-04-12'
-SECOND_SECTION = 3
+SECOND_URL = f'{BASE_URL}?startDate={SECOND_DATE}'
 
 # 예약
 keep_going = True
@@ -158,7 +211,7 @@ while keep_going:
 
         try:
             # 첫 번째 예약 진행
-            if do_reservation(SECTION):
+            if do_reservation():
                 keep_going = False
                 print("=== 첫 번째 예약 완료, 두 번째 예약 시작 ===")
 
@@ -167,7 +220,7 @@ while keep_going:
                 driver.switch_to.window(driver.window_handles[-1])
                 time.sleep(random.uniform(1, 1.5))
 
-                do_reservation(SECOND_SECTION)
+                do_reservation()
                 print("=== 두 번째 예약 완료 ===")
         except Exception as e:
             print("예약 버튼 클릭 오류:", e)
