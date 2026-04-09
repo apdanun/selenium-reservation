@@ -59,9 +59,9 @@ except Exception:
 # 예약 사이트 열기
 # 내곡 217811
 # 양재 210031
-BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/217811/items/7477748'
-FIRST_DATE = '2026-04-05'
-SECOND_DATE = '2026-04-12'
+BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/217811/items/7563648'
+FIRST_DATE = '2026-05-17'
+SECOND_DATE = '2026-05-24'
 TARGET_URL = f'{BASE_URL}?startDate={FIRST_DATE}'
 # 기존 탭 정리: 첫 번째 탭만 남기고 나머지 닫기
 handles = driver.window_handles
@@ -114,17 +114,23 @@ def click_button(xpath, wait=1):
 
 # 우선순위 희망 시간대 (시작시, 끝시) - 이 슬롯들을 먼저 시도하고, 없으면 나머지 시간대 순차 탐색
 PREFERRED_SLOTS = [
-    (9, 11),
-    (10, 12),
+    (8, 10),
+    (7, 9),
+    (9, 11)
 ]
 SLOT_HOURS = 2      # 연속 예약 시간 수
-RANGE_START = 6     # 전체 예약 가능 시작 시간
+XPATH_BASE_START = 6    # li[1]이 의미하는 시작 시간
+RANGE_START = 6         # 내가 실제로 탐색을 시작할 시간
 RANGE_END = 17      # 전체 예약 가능 끝 시간 (17시 시작 슬롯까지 → 17~19)
 EXCLUDE_HOURS = set(range(11, 13))  # 제외할 시간 (11시, 12시 → 점심시간)
+DATE_XPATH_BASE_STARTS = {
+    FIRST_DATE: 6,
+    SECOND_DATE: 6,
+}
 
-def do_reservation():
+def do_reservation(xpath_base_start=XPATH_BASE_START):
     """시간 선택 → 다음 → 결제창 버튼 클릭까지 수행. 성공 시 True 반환."""
-    # li 인덱스 = hour - 5 (li[1]=6시, li[2]=7시, li[3]=8시, ...)
+    # li 인덱스 = hour - (xpath_base_start - 1)
     base_xpath = '/html/body/div[1]/main/section[2]/div/div[2]/div[2]/div/div[2]/ul'
 
     # 우선순위 슬롯 + 나머지 시간대 순차 목록 생성 (중복 제거)
@@ -139,7 +145,7 @@ def do_reservation():
     selected_xpaths = None
     for start_hour, end_hour in slots_to_try:
         hours = list(range(start_hour, end_hour))
-        xpaths = [f'{base_xpath}/li[{h - 5}]/button' for h in hours]
+        xpaths = [f'{base_xpath}/li[{h - xpath_base_start + 1}]/button' for h in hours]
 
         all_available = True
         for idx, xp in enumerate(xpaths):
@@ -204,14 +210,14 @@ while keep_going:
     print(now)
 
     # 예약 시도
-    if now.hour == 9 and now.minute == 0 and (now.second >= 0 and now.second <= 10):
+    if now.hour == 15 and now.minute == 12 and (now.second >= 0 and now.second <= 10):
         print("일찍 새로고침!")
         driver.refresh()
         time.sleep(random.uniform(0.6, 1))
 
         try:
             # 첫 번째 예약 진행
-            if do_reservation():
+            if do_reservation(DATE_XPATH_BASE_STARTS.get(FIRST_DATE, XPATH_BASE_START)):
                 keep_going = False
                 print("=== 첫 번째 예약 완료, 두 번째 예약 시작 ===")
 
@@ -220,7 +226,7 @@ while keep_going:
                 driver.switch_to.window(driver.window_handles[-1])
                 time.sleep(random.uniform(1, 1.5))
 
-                do_reservation()
+                do_reservation(DATE_XPATH_BASE_STARTS.get(SECOND_DATE, XPATH_BASE_START))
                 print("=== 두 번째 예약 완료 ===")
         except Exception as e:
             print("예약 버튼 클릭 오류:", e)
