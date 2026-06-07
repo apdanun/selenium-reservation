@@ -59,9 +59,9 @@ except Exception:
 # 예약 사이트 열기
 # 내곡 217811
 # 양재 210031
-BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/217811/items/7563648'
-FIRST_DATE = '2026-05-17'
-SECOND_DATE = '2026-05-24'
+BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/217811/items/7732616'
+FIRST_DATE = '2026-07-04'
+SECOND_DATE = '2026-07-11'
 TARGET_URL = f'{BASE_URL}?startDate={FIRST_DATE}'
 # 기존 탭 정리: 첫 번째 탭만 남기고 나머지 닫기
 handles = driver.window_handles
@@ -114,9 +114,9 @@ def click_button(xpath, wait=1):
 
 # 우선순위 희망 시간대 (시작시, 끝시) - 이 슬롯들을 먼저 시도하고, 없으면 나머지 시간대 순차 탐색
 PREFERRED_SLOTS = [
-    (8, 10),
+    (6, 8),
     (7, 9),
-    (9, 11)
+    (8,10)
 ]
 SLOT_HOURS = 2      # 연속 예약 시간 수
 XPATH_BASE_START = 6    # li[1]이 의미하는 시작 시간
@@ -131,7 +131,16 @@ DATE_XPATH_BASE_STARTS = {
 def do_reservation(xpath_base_start=XPATH_BASE_START):
     """시간 선택 → 다음 → 결제창 버튼 클릭까지 수행. 성공 시 True 반환."""
     # li 인덱스 = hour - (xpath_base_start - 1)
-    base_xpath = '/html/body/div[1]/main/section[2]/div/div[2]/div[2]/div/div[2]/ul'
+    # 절대 경로(div[2]/div[3]) 대신 class 기반으로 탐색해 레이아웃 변동에 견고하게 대응
+    # section_calendar > section_inner > section_content > time_area > slick-slider > time_list(ul) 안의 li
+    base_xpath = (
+        "//section[contains(@class,'section_calendar')]"
+        "//div[contains(@class,'section_inner')]"
+        "//div[contains(@class,'section_content')]"
+        "//div[contains(@class,'time_area')]"
+        "//div[contains(@class,'slick-slider')]"
+        "//ul[contains(@class,'time_list')]"
+    )
 
     # 우선순위 슬롯 + 나머지 시간대 순차 목록 생성 (중복 제거)
     all_slots = [
@@ -210,7 +219,7 @@ while keep_going:
     print(now)
 
     # 예약 시도
-    if now.hour == 15 and now.minute == 12 and (now.second >= 0 and now.second <= 10):
+    if now.hour == 9 and now.minute == 0 and (now.second >= 0 and now.second <= 10):
         print("일찍 새로고침!")
         driver.refresh()
         time.sleep(random.uniform(0.6, 1))
