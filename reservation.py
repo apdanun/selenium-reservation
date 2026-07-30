@@ -59,9 +59,10 @@ except Exception:
 # 예약 사이트 열기
 # 내곡 217811
 # 양재 210031
-BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/217811/items/7732616'
-FIRST_DATE = '2026-07-04'
-SECOND_DATE = '2026-07-11'
+BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/210031/items/7890475'
+FIRST_DATE = '2026-09-13'
+SECOND_DATE = '2026-09-20'
+THIRD_DATE = '2026-09-27'
 TARGET_URL = f'{BASE_URL}?startDate={FIRST_DATE}'
 # 기존 탭 정리: 첫 번째 탭만 남기고 나머지 닫기
 handles = driver.window_handles
@@ -113,10 +114,11 @@ def click_button(xpath, wait=1):
     ).click()
 
 # 우선순위 희망 시간대 (시작시, 끝시) - 이 슬롯들을 먼저 시도하고, 없으면 나머지 시간대 순차 탐색
+# 6 = 6시
 PREFERRED_SLOTS = [
-    (6, 8),
-    (7, 9),
-    (8,10)
+    (7,9),
+    (8,10),
+    (6,8)
 ]
 SLOT_HOURS = 2      # 연속 예약 시간 수
 XPATH_BASE_START = 6    # li[1]이 의미하는 시작 시간
@@ -126,6 +128,7 @@ EXCLUDE_HOURS = set(range(11, 13))  # 제외할 시간 (11시, 12시 → 점심�
 DATE_XPATH_BASE_STARTS = {
     FIRST_DATE: 6,
     SECOND_DATE: 6,
+    THIRD_DATE: 6,
 }
 
 def do_reservation(xpath_base_start=XPATH_BASE_START):
@@ -210,6 +213,7 @@ def do_reservation(xpath_base_start=XPATH_BASE_START):
     return True
 
 SECOND_URL = f'{BASE_URL}?startDate={SECOND_DATE}'
+THIRD_URL = f'{BASE_URL}?startDate={THIRD_DATE}'
 
 # 예약
 keep_going = True
@@ -236,7 +240,15 @@ while keep_going:
                 time.sleep(random.uniform(1, 1.5))
 
                 do_reservation(DATE_XPATH_BASE_STARTS.get(SECOND_DATE, XPATH_BASE_START))
-                print("=== 두 번째 예약 완료 ===")
+                print("=== 두 번째 예약 완료, 세 번째 예약 시작 ===")
+
+                # 새 탭에서 세 번째 예약 진행
+                driver.execute_script(f"window.open('{THIRD_URL}', '_blank');")
+                driver.switch_to.window(driver.window_handles[-1])
+                time.sleep(random.uniform(1, 1.5))
+
+                do_reservation(DATE_XPATH_BASE_STARTS.get(THIRD_DATE, XPATH_BASE_START))
+                print("=== 세 번째 예약 완료 ===")
         except Exception as e:
             print("예약 버튼 클릭 오류:", e)
             time.sleep(2)  # 2초 후 다시 시도
