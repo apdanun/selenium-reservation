@@ -10,7 +10,20 @@ import random
 import time
 import pytz
 import subprocess
+import os
+import sys
+import shutil
 from telegram_notifier import send_telegram
+
+IS_WINDOWS = sys.platform.startswith('win')
+IS_MAC = sys.platform == 'darwin'
+if IS_WINDOWS:
+    # 윈도우 콘솔(cp949)에서 한글/이모지 출력 때문에 죽지 않도록
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 # ===================== 설정 =====================
 # 예약 사이트 열기
@@ -58,6 +71,9 @@ TAKEN_KEYWORDS = ['이미', '다른 사용자', '마감', '예약할 수 없', '
 
 # 테스트용: True 면 "동의하고 결제하기" 화면까지만 가고 버튼은 누르지 않는다 (실제 예약 시 False 로)
 DRY_RUN = False
+
+# Chrome 실행 파일 경로. None 이면 OS 별 기본 설치 경로에서 자동으로 찾는다
+CHROME_PATH = None
 # ===============================================
 
 def validate_config():
@@ -102,21 +118,47 @@ def validate_config():
 
 validate_config()
  
- # 실행파일 경로로 크롬 실행 (이미 실행 중이면 건너뜀)
+# 실행파일 경로로 크롬 실행 (이미 실행 중이면 건너뜀)
 import socket
 def is_port_open(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('127.0.0.1', port)) == 0
 
+def find_chrome():
+    """OS 별 Chrome 실행 파일 경로를 찾는다."""
+    if CHROME_PATH:
+        return CHROME_PATH
+    if IS_WINDOWS:
+        candidates = [
+            os.path.join(os.environ.get(env, ''), 'Google', 'Chrome', 'Application', 'chrome.exe')
+            for env in ('PROGRAMFILES', 'PROGRAMFILES(X86)', 'LOCALAPPDATA')
+            if os.environ.get(env)
+        ]
+    elif IS_MAC:
+        candidates = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
+    else:
+        candidates = [shutil.which(name) for name in ('google-chrome', 'google-chrome-stable', 'chromium')]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    raise SystemExit("Chrome 실행 파일을 찾지 못했습니다. 설정의 CHROME_PATH 에 경로를 직접 지정하세요.")
+
+# 로그인 정보가 저장되는 Chrome 프로필 폴더 - 어디서 실행하든 스크립트 옆 chromeCookie 를 쓰도록 절대경로로
+CHROME_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chromeCookie')
+
 if not is_port_open(9222):
     subprocess.Popen([
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        find_chrome(),
         "--remote-debugging-port=9222",
-        "--user-data-dir=./chromeCookie",
+        f"--user-data-dir={CHROME_PROFILE_DIR}",
         "--no-first-run",
         "--no-default-browser-check"
     ])
-    time.sleep(3)  # Chrome이 디버깅 포트를 열 때까지 대기
+    # Chrome이 디버깅 포트를 열 때까지 대기 (최대 15초)
+    for _ in range(30):
+        if is_port_open(9222):
+            break
+        time.sleep(0.5)
 
 option = Options()
 option.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
@@ -233,9 +275,9 @@ driver.execute_cdp_cmd(
         "source": """
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
-        Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' });
+        Object.defineProperty(navigator, 'platform', { get: () => '%s' });
         Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-        """
+        """ % ('Win32' if IS_WINDOWS else 'MacIntel')
     }
 )
 

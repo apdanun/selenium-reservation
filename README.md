@@ -4,10 +4,31 @@
 
 ## 실행 방법
 
+Python 3.10 이상, Google Chrome 설치 필요.
+
+### macOS
+
 ```bash
+python3 -m venv venv              # 최초 1회
 source venv/bin/activate
+pip install -r requirements.txt   # 최초 1회
 python3 reservation.py
 ```
+
+### Windows (PowerShell)
+
+```powershell
+py -3 -m venv venv                # 최초 1회
+venv\Scripts\activate
+pip install -r requirements.txt   # 최초 1회
+python reservation.py
+```
+
+- PowerShell 에서 `activate` 가 실행 정책 오류로 막히면: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+- `venv` 폴더는 OS 간에 공유되지 않으므로 각 PC 에서 새로 만든다.
+- Chrome 은 기본 설치 경로(`Program Files`, `AppData\Local`)에서 자동으로 찾는다. 다른 곳에 설치했다면 설정의 `CHROME_PATH` 에 `r"D:\Chrome\chrome.exe"` 처럼 지정한다.
+
+### 공통
 
 - 실행하면 먼저 설정값을 검사하고(`설정 확인 완료: ...` 출력), 문제가 있으면 Chrome 을 띄우기 전에 종료한다.
 - 디버깅 포트(9222)로 Chrome 을 띄우거나 이미 떠 있는 Chrome 에 붙는다. 처음 한 번은 열린 Chrome 에서 네이버 로그인이 되어 있어야 한다.
@@ -33,6 +54,7 @@ python3 -m py_compile reservation.py telegram_notifier.py
 | `RUN_HOUR` / `RUN_MINUTE` | 예약 시작 시각 (서울 시간) |
 | `TAKEN_KEYWORDS` | "예약이 마감되었습니다" 류 안내를 감지할 문구 |
 | `DRY_RUN` | `True` 면 "동의하고 결제하기" 직전까지만 진행 (테스트용). 실제 예약은 `False` |
+| `CHROME_PATH` | Chrome 실행 파일 경로. `None` 이면 OS 별 기본 경로에서 자동 탐색 |
 
 목록 항목 사이 쉼표(`,`)를 빠뜨리지 않도록 주의. 빠뜨리면 실행 시 설정 검사에서 멈춘다.
 
