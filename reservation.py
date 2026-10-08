@@ -161,15 +161,9 @@ if not is_port_open(9222):
         time.sleep(0.5)
 
 option = Options()
+# 위에서 띄운 Chrome 에 붙기만 하므로 add_argument 로 넣는 실행 옵션(user-agent, window-size 등)은 적용되지 않는다.
+# Chrome 실행 옵션이 필요하면 위 subprocess.Popen 인자에 넣을 것.
 option.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
-option.add_argument('--window-size=1920,1080')
-option.add_argument(
-    "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
-)
-option.add_argument("--lang=ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
-# 자동화 탐지 방지
-#option.add_argument("disable-blink-features=AutomationControlled")
 
 for attempt in range(5):
     try:
