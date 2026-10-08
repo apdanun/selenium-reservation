@@ -9,6 +9,7 @@ import random
 import time
 import pytz
 import subprocess
+from telegram_notifier import send_telegram
  
  # 실행파일 경로로 크롬 실행 (이미 실행 중이면 건너뜀)
 import socket
@@ -59,10 +60,10 @@ except Exception:
 # 예약 사이트 열기
 # 내곡 217811
 # 양재 210031
-BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/210031/items/7890475'
-FIRST_DATE = '2026-09-13'
-SECOND_DATE = '2026-09-20'
-THIRD_DATE = '2026-09-27'
+BASE_URL = 'https://m.booking.naver.com/booking/10/bizes/210031/items/8073326'
+FIRST_DATE = '2026-11-05'
+SECOND_DATE = '2026-11-19'
+THIRD_DATE = '2026-11-26'
 TARGET_URL = f'{BASE_URL}?startDate={FIRST_DATE}'
 # 기존 탭 정리: 첫 번째 탭만 남기고 나머지 닫기
 handles = driver.window_handles
@@ -116,8 +117,12 @@ def click_button(xpath, wait=1):
 # 우선순위 희망 시간대 (시작시, 끝시) - 이 슬롯들을 먼저 시도하고, 없으면 나머지 시간대 순차 탐색
 # 6 = 6시
 PREFERRED_SLOTS = [
-    (7,9),
+    (12,14),
+    (14,16),
+    (15,17),
+    (16,18),
     (8,10),
+    (7,9),
     (6,8)
 ]
 SLOT_HOURS = 2      # 연속 예약 시간 수
@@ -132,7 +137,7 @@ DATE_XPATH_BASE_STARTS = {
 }
 
 def do_reservation(xpath_base_start=XPATH_BASE_START):
-    """시간 선택 → 다음 → 결제창 버튼 클릭까지 수행. 성공 시 True 반환."""
+    """시간 선택 → 다음 → 동의하고 결제하기 클릭까지 수행. 성공 시 (시작시, 끝시, 결제화면 URL) 반환, 실패 시 False."""
     # li 인덱스 = hour - (xpath_base_start - 1)
     # 절대 경로(div[2]/div[3]) 대신 class 기반으로 탐색해 레이아웃 변동에 견고하게 대응
     # section_calendar > section_inner > section_content > time_area > slick-slider > time_list(ul) 안의 li
@@ -155,6 +160,7 @@ def do_reservation(xpath_base_start=XPATH_BASE_START):
     slots_to_try = list(PREFERRED_SLOTS) + remaining
 
     selected_xpaths = None
+    selected_slot = None
     for start_hour, end_hour in slots_to_try:
         hours = list(range(start_hour, end_hour))
         xpaths = [f'{base_xpath}/li[{h - xpath_base_start + 1}]/button' for h in hours]
@@ -168,6 +174,7 @@ def do_reservation(xpath_base_start=XPATH_BASE_START):
         if all_available:
             print(f"{start_hour}시~{end_hour}시 예약 가능! 선택합니다.")
             selected_xpaths = xpaths
+            selected_slot = (start_hour, end_hour)
             break
         else:
             print(f"{start_hour}시~{end_hour}시 불가")
@@ -202,15 +209,59 @@ def do_reservation(xpath_base_start=XPATH_BASE_START):
 
     # 예약 페이지로 넘어갔는지 확인 (페이지 URL 변경 체크)
     WebDriverWait(driver, 10).until(EC.url_changes(driver.current_url))
-    print("결제 창으로 넘어갔습니다!")
+    print("동의하고 결제하기 화면으로 넘어갔습니다!")
     time.sleep(random.uniform(0.7, 1.2))
 
+    # [동의하고 결제하기] 선택
     next_button = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, '/html/body/div[1]/div[2]/div[5]/div/button[2]'))
     )
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", next_button)
+    agree_url = driver.current_url
+    handles_before = set(driver.window_handles)
     next_button.click()
-    return True
+    print("동의하고 결제하기 클릭 완료")
+
+    payment_url = wait_payment_url(agree_url, handles_before)
+    print(f"결제 화면 URL: {payment_url}")
+    return selected_slot + (payment_url,)
+
+def wait_payment_url(agree_url, handles_before, wait=10):
+    """동의하고 결제하기 클릭 후 결제 화면 URL 을 얻는다.
+    같은 탭 이동 / 새 창(팝업) 열림 둘 다 대응. 실패해도 예외 없이 그 시점의 URL 을 반환한다."""
+    origin_handle = driver.current_window_handle
+    try:
+        WebDriverWait(driver, wait).until(
+            lambda d: set(d.window_handles) - handles_before or d.current_url != agree_url
+        )
+        new_handles = set(driver.window_handles) - handles_before
+        if new_handles:
+            # 결제가 새 창으로 열린 경우: 새 창의 URL 을 읽고 원래 탭으로 복귀
+            driver.switch_to.window(new_handles.pop())
+            WebDriverWait(driver, wait).until(lambda d: d.current_url not in ("", "about:blank"))
+            url = driver.current_url
+            driver.switch_to.window(origin_handle)
+            return url
+        return driver.current_url
+    except Exception as e:
+        print(f"결제 화면 URL 대기 실패: {type(e).__name__}")
+        try:
+            driver.switch_to.window(origin_handle)
+            return driver.current_url
+        except Exception:
+            return "(주소 확인 실패)"
+
+def notify_success(date, slot):
+    """do_reservation 성공 시에만 텔레그램 발송. 알림 실패가 다음 예약을 막지 않도록 예외를 밖으로 내보내지 않는다."""
+    if not slot:
+        return
+    try:
+        start_hour, end_hour, url = slot
+        send_telegram(
+            f"✅ [네이버 예약 성공] {date} {start_hour}시~{end_hour}시 결제창 진입! 결제를 완료하세요.\n{url}"
+        )
+    except Exception as e:
+        print(f"성공 알림 처리 실패: {type(e).__name__}")
 
 SECOND_URL = f'{BASE_URL}?startDate={SECOND_DATE}'
 THIRD_URL = f'{BASE_URL}?startDate={THIRD_DATE}'
@@ -223,34 +274,39 @@ while keep_going:
     print(now)
 
     # 예약 시도
-    if now.hour == 9 and now.minute == 0 and (now.second >= 0 and now.second <= 10):
+    if now.hour == 15 and now.minute == 26 and (now.second >= 0 and now.second <= 10):
         print("일찍 새로고침!")
         driver.refresh()
         time.sleep(random.uniform(0.6, 1))
 
         try:
+            keep_going = False
+
             # 첫 번째 예약 진행
-            if do_reservation(DATE_XPATH_BASE_STARTS.get(FIRST_DATE, XPATH_BASE_START)):
-                keep_going = False
-                print("=== 첫 번째 예약 완료, 두 번째 예약 시작 ===")
+            result1 = do_reservation(DATE_XPATH_BASE_STARTS.get(FIRST_DATE, XPATH_BASE_START))
+            print(f"=== 첫 번째 예약 {'완료' if result1 else '실패'}, 두 번째 예약 시작 ===")
+            notify_success(FIRST_DATE, result1)
 
-                # 새 탭에서 두 번째 예약 진행
-                driver.execute_script(f"window.open('{SECOND_URL}', '_blank');")
-                driver.switch_to.window(driver.window_handles[-1])
-                time.sleep(random.uniform(1, 1.5))
+            # 새 탭에서 두 번째 예약 진행
+            driver.execute_script(f"window.open('{SECOND_URL}', '_blank');")
+            driver.switch_to.window(driver.window_handles[-1])
+            time.sleep(random.uniform(1, 1.5))
 
-                do_reservation(DATE_XPATH_BASE_STARTS.get(SECOND_DATE, XPATH_BASE_START))
-                print("=== 두 번째 예약 완료, 세 번째 예약 시작 ===")
+            result2 = do_reservation(DATE_XPATH_BASE_STARTS.get(SECOND_DATE, XPATH_BASE_START))
+            print(f"=== 두 번째 예약 {'완료' if result2 else '실패'}, 세 번째 예약 시작 ===")
+            notify_success(SECOND_DATE, result2)
 
-                # 새 탭에서 세 번째 예약 진행
-                driver.execute_script(f"window.open('{THIRD_URL}', '_blank');")
-                driver.switch_to.window(driver.window_handles[-1])
-                time.sleep(random.uniform(1, 1.5))
+            # 새 탭에서 세 번째 예약 진행
+            driver.execute_script(f"window.open('{THIRD_URL}', '_blank');")
+            driver.switch_to.window(driver.window_handles[-1])
+            time.sleep(random.uniform(1, 1.5))
 
-                do_reservation(DATE_XPATH_BASE_STARTS.get(THIRD_DATE, XPATH_BASE_START))
-                print("=== 세 번째 예약 완료 ===")
+            result3 = do_reservation(DATE_XPATH_BASE_STARTS.get(THIRD_DATE, XPATH_BASE_START))
+            print(f"=== 세 번째 예약 {'완료' if result3 else '실패'} ===")
+            notify_success(THIRD_DATE, result3)
         except Exception as e:
             print("예약 버튼 클릭 오류:", e)
+            send_telegram(f"[네이버 예약 오류] {type(e).__name__}: {str(e)[:200]}")
             time.sleep(2)  # 2초 후 다시 시도
 
     # 정해진 시간까지 대기
