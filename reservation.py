@@ -32,18 +32,12 @@ if IS_WINDOWS:
 BIZ_URL = 'https://m.booking.naver.com/booking/10/bizes/217811/items'
 # 예약할 날짜 - 앞에서부터 순서대로 시도
 DATES = [
-    '2026-11-07',
-    '2026-11-14',
-    '2026-11-01',
-    '2026-11-15',
-    '2026-11-22',
-    '2026-11-29',
+    '2026-11-11',
+    '2026-11-18',
 ]
 # 코트(item id, BIZ_URL 뒤에 붙는 값) - 날짜마다 앞에서부터 시도하고, 한 코트라도 성공하면 다음 날짜로
 COURTS = [
     '8081115',
-    '8081105',
-    '7990859',
 ]
 
 # 우선순위 희망 시간대 (시작시, 끝시) - 이 슬롯들을 먼저 시도하고, 없으면 나머지 시간대 순차 탐색
@@ -63,11 +57,15 @@ RANGE_END = 17      # 전체 예약 가능 끝 시간 (17시 시작 슬롯까지
 EXCLUDE_HOURS = set(range(11, 13))  # 제외할 시간 (11시, 12시 → 점심시간)
 
 # 예약 시작 시각 (서울 시간) - 이 시각 0~10초 사이에 새로고침 후 예약 시작
+# 9 -> 9시
 RUN_HOUR = 9
+# 0 -> 0분. 정각
 RUN_MINUTE = 0
 
 # "이미 예약됨" 같은 안내가 뜨면 기다리지 않고 바로 실패 처리할 문구 (알림창/팝업 안의 글자에 하나라도 포함되면 감지)
 TAKEN_KEYWORDS = ['이미', '다른 사용자', '마감', '예약할 수 없', '예약이 불가', '선택할 수 없']
+# 위 문구가 있어도 이 문구가 들어 있으면 정상 진행 안내로 보고 무시 (예: 네이버페이 이동 로딩 팝업)
+NOT_TAKEN_KEYWORDS = ['네이버페이로 이동', '결제진행', '결제 진행', '로딩']
 
 # 테스트용: True 면 "동의하고 결제하기" 화면까지만 가고 버튼은 누르지 않는다 (실제 예약 시 False 로)
 DRY_RUN = False
@@ -194,11 +192,14 @@ class SlotTaken(Exception):
 _FIND_NOTICE_JS = """
 const keywords = arguments[0];
 const visible = el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+const ignores = arguments[1];
+// confirm_alert_con 은 마감 안내뿐 아니라 '네이버페이로 이동합니다' 로딩 팝업에도 쓰이므로 문구로 구분한다
+const isTaken = text => text && !ignores.some(k => text.includes(k)) && keywords.some(k => text.includes(k));
 for (const el of document.querySelectorAll('.confirm_alert_con')) {
   if (!visible(el)) continue;
   const dsc = el.querySelector('.in_ly_dsc');
   const text = ((dsc || el).innerText || '').trim();
-  if (text) return text;
+  if (isTaken(text)) return text;
 }
 const sel = '[role="dialog"],[role="alertdialog"],[role="alert"],'
   + '[class*="popup"],[class*="Popup"],[class*="layer"],[class*="Layer"],'
@@ -207,26 +208,37 @@ const sel = '[role="dialog"],[role="alertdialog"],[role="alert"],'
 for (const el of document.querySelectorAll(sel)) {
   if (!visible(el)) continue;  // 안 보이는 요소 제외
   const text = (el.innerText || '').trim();
-  if (text && text.length < 300 && keywords.some(k => text.includes(k))) return text;
+  if (text.length < 300 && isTaken(text)) return text;
 }
 return null;
 """
 
+def is_taken_text(text):
+    """마감 안내 문구인지. 정상 진행 안내(NOT_TAKEN_KEYWORDS)는 제외."""
+    if not text:
+        return False
+    if any(k in text for k in NOT_TAKEN_KEYWORDS):
+        return False
+    return any(k in text for k in TAKEN_KEYWORDS)
+
 def find_taken_notice():
-    """브라우저 알림창(alert) 또는 화면 팝업에 '이미 예약됨' 류 안내가 있으면 그 문구를, 없으면 None."""
+    """브라우저 알림창(alert) 또는 화면 팝업에 '이미 예약됨' 류 안내가 있으면 그 문구를, 없으면 None.
+    마감 문구가 아닌 알림창/팝업은 무시한다."""
     try:
         alert = driver.switch_to.alert
         text = alert.text
-        alert.accept()
-        return text or "(알림창)"
+        if is_taken_text(text):
+            alert.accept()
+            return text
+        return None  # 마감 안내가 아닌 알림창은 건드리지 않음
     except NoAlertPresentException:
         pass
     except UnexpectedAlertPresentException as e:
-        return e.alert_text or "(알림창)"
+        return e.alert_text if is_taken_text(e.alert_text) else None
     try:
-        return driver.execute_script(_FIND_NOTICE_JS, TAKEN_KEYWORDS)
+        return driver.execute_script(_FIND_NOTICE_JS, TAKEN_KEYWORDS, NOT_TAKEN_KEYWORDS)
     except UnexpectedAlertPresentException as e:
-        return e.alert_text or "(알림창)"
+        return e.alert_text if is_taken_text(e.alert_text) else None
     except Exception:
         return None
 
@@ -243,7 +255,8 @@ def wait_or_taken(condition, timeout=10, interval=0.2):
             if value:
                 return value
         except UnexpectedAlertPresentException as e:
-            raise SlotTaken((e.alert_text or "(알림창)")[:100])
+            if is_taken_text(e.alert_text):
+                raise SlotTaken(e.alert_text[:100])
         except Exception:
             pass
         time.sleep(interval)
