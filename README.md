@@ -74,6 +74,14 @@ BOT_TOKEN = "..."
 CHAT_ID = "..."
 ```
 
+저장소의 `telegram_config.py` 는 빈 값 템플릿이다. 값을 채운 뒤 토큰이 커밋되지 않도록 clone 한 PC 마다 한 번 실행한다:
+
+```bash
+git update-index --skip-worktree telegram_config.py
+```
+
+(템플릿 자체를 수정해야 할 때는 `git update-index --no-skip-worktree telegram_config.py` 로 해제)
+
 전송 테스트:
 
 ```bash
