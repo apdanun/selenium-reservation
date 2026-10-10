@@ -13,6 +13,7 @@ import subprocess
 import os
 import sys
 import shutil
+import argparse
 from telegram_notifier import send_telegram
 
 IS_WINDOWS = sys.platform.startswith('win')
@@ -58,9 +59,9 @@ EXCLUDE_HOURS = set(range(11, 13))  # 제외할 시간 (11시, 12시 → 점심�
 
 # 예약 시작 시각 (서울 시간) - 이 시각 0~10초 사이에 새로고침 후 예약 시작
 # 9 -> 9시
-RUN_HOUR = 9
+RUN_HOUR = 16
 # 0 -> 0분. 정각
-RUN_MINUTE = 0
+RUN_MINUTE =26
 
 # "이미 예약됨" 같은 안내가 뜨면 기다리지 않고 바로 실패 처리할 문구 (알림창/팝업 안의 글자에 하나라도 포함되면 감지)
 TAKEN_KEYWORDS = ['이미', '다른 사용자', '마감', '예약할 수 없', '예약이 불가', '선택할 수 없']
@@ -68,11 +69,39 @@ TAKEN_KEYWORDS = ['이미', '다른 사용자', '마감', '예약할 수 없', '
 NOT_TAKEN_KEYWORDS = ['네이버페이로 이동', '결제진행', '결제 진행', '로딩']
 
 # 테스트용: True 면 "동의하고 결제하기" 화면까지만 가고 버튼은 누르지 않는다 (실제 예약 시 False 로)
-DRY_RUN = False
+DRY_RUN = True
 
 # Chrome 실행 파일 경로. None 이면 OS 별 기본 설치 경로에서 자동으로 찾는다
 CHROME_PATH = None
+
+# Chrome 디버깅 포트 / 로그인 정보 폴더. 여러 개 동시 실행 시 --port 옵션으로 실행마다 다르게 준다
+CHROME_PORT = 9222
+CHROME_PROFILE = None  # None 이면 포트 9222 → chromeCookie, 그 외 → chromeCookie_<포트>
 # ===============================================
+
+def apply_args():
+    """실행 옵션으로 위 설정 일부를 덮어쓴다. 옵션을 안 주면 위 설정값 그대로.
+    예) python3 reservation.py --port 9223 --dates 2026-11-22,2026-11-29 --courts 8081115"""
+    global DATES, COURTS, CHROME_PORT, CHROME_PROFILE
+    parser = argparse.ArgumentParser(description='네이버 예약 자동화')
+    parser.add_argument('--port', type=int, help=f'Chrome 디버깅 포트 (기본 {CHROME_PORT})')
+    parser.add_argument('--profile', help='Chrome 로그인 정보 폴더 이름/경로 (기본: 포트에 따라 자동)')
+    parser.add_argument('--dates', help='예약할 날짜, 쉼표로 구분 (예: 2026-11-07,2026-11-14)')
+    parser.add_argument('--courts', help='코트 id, 쉼표로 구분 (예: 8081115,8081105)')
+    args = parser.parse_args()
+    split = lambda v: [x.strip() for x in v.split(',') if x.strip()]
+    if args.port is not None:
+        CHROME_PORT = args.port
+    if args.profile:
+        CHROME_PROFILE = args.profile
+    if args.dates:
+        DATES = split(args.dates)
+    if args.courts:
+        COURTS = split(args.courts)
+    if not CHROME_PROFILE:
+        CHROME_PROFILE = 'chromeCookie' if CHROME_PORT == 9222 else f'chromeCookie_{CHROME_PORT}'
+
+apply_args()
 
 def validate_config():
     """설정값 실수(쉼표 누락, 날짜/시간 형식 오류 등)를 Chrome 실행 전에 잡는다. 문제가 있으면 목록을 출력하고 종료."""
@@ -104,6 +133,8 @@ def validate_config():
         errors.append(f"RANGE_START({RANGE_START}) / RANGE_END({RANGE_END}) 범위 오류")
     if not (0 <= RUN_HOUR <= 23 and 0 <= RUN_MINUTE <= 59):
         errors.append(f"RUN_HOUR({RUN_HOUR}) / RUN_MINUTE({RUN_MINUTE}) 범위 오류")
+    if not (1024 <= CHROME_PORT <= 65535):
+        errors.append(f"포트 범위 오류: {CHROME_PORT} (1024~65535)")
     if not isinstance(DRY_RUN, bool):
         errors.append(f"DRY_RUN 은 True / False 여야 합니다: {DRY_RUN!r}")
 
@@ -113,6 +144,9 @@ def validate_config():
             print(f"  - {e}")
         raise SystemExit(1)
     print(f"설정 확인 완료: 날짜 {len(DATES)}개, 코트 {len(COURTS)}개, DRY_RUN={DRY_RUN}, 시작 {RUN_HOUR:02d}:{RUN_MINUTE:02d}")
+    print(f"  Chrome 포트 {CHROME_PORT}, 프로필 {CHROME_PROFILE}")
+    print(f"  날짜: {', '.join(DATES)}")
+    print(f"  코트: {', '.join(COURTS)}")
 
 validate_config()
  
@@ -141,27 +175,28 @@ def find_chrome():
             return path
     raise SystemExit("Chrome 실행 파일을 찾지 못했습니다. 설정의 CHROME_PATH 에 경로를 직접 지정하세요.")
 
-# 로그인 정보가 저장되는 Chrome 프로필 폴더 - 어디서 실행하든 스크립트 옆 chromeCookie 를 쓰도록 절대경로로
-CHROME_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chromeCookie')
+# 로그인 정보가 저장되는 Chrome 프로필 폴더 - 어디서 실행하든 스크립트 옆 폴더를 쓰도록 절대경로로
+# 포트(=Chrome)마다 프로필 폴더가 달라야 한다. 같은 폴더를 Chrome 두 개가 동시에 쓸 수 없음
+CHROME_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), CHROME_PROFILE)
 
-if not is_port_open(9222):
+if not is_port_open(CHROME_PORT):
     subprocess.Popen([
         find_chrome(),
-        "--remote-debugging-port=9222",
+        f"--remote-debugging-port={CHROME_PORT}",
         f"--user-data-dir={CHROME_PROFILE_DIR}",
         "--no-first-run",
         "--no-default-browser-check"
     ])
     # Chrome이 디버깅 포트를 열 때까지 대기 (최대 15초)
     for _ in range(30):
-        if is_port_open(9222):
+        if is_port_open(CHROME_PORT):
             break
         time.sleep(0.5)
 
 option = Options()
 # 위에서 띄운 Chrome 에 붙기만 하므로 add_argument 로 넣는 실행 옵션(user-agent, window-size 등)은 적용되지 않는다.
 # Chrome 실행 옵션이 필요하면 위 subprocess.Popen 인자에 넣을 것.
-option.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
+option.add_experimental_option("debuggerAddress", f"127.0.0.1:{CHROME_PORT}")
 
 for attempt in range(5):
     try:

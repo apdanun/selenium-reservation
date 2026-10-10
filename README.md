@@ -40,6 +40,29 @@ python reservation.py
 python3 -m py_compile reservation.py telegram_notifier.py
 ```
 
+## 실행 옵션 / 여러 개 동시 실행
+
+옵션을 주면 설정 블록의 값 대신 사용한다. 안 주면 설정 블록 값 그대로.
+
+| 옵션 | 설명 |
+|---|---|
+| `--port` | Chrome 디버깅 포트 (기본 9222) |
+| `--profile` | Chrome 로그인 정보 폴더 (기본: 9222 → `chromeCookie`, 그 외 → `chromeCookie_<포트>`) |
+| `--dates` | 예약할 날짜, 쉼표 구분 |
+| `--courts` | 코트 id, 쉼표 구분 |
+
+터미널 두 개에서 나눠 돌릴 때는 **포트와 날짜(또는 코트)를 반드시 다르게** 준다. 같은 포트로 두 개를 띄우면 같은 Chrome 탭을 같이 조작해서 서로 방해한다.
+
+```bash
+# 터미널 1
+python3 reservation.py --port 9222 --dates 2026-11-07,2026-11-14,2026-11-15
+# 터미널 2
+python3 reservation.py --port 9223 --dates 2026-11-22,2026-11-29
+```
+
+- 포트가 다르면 Chrome 창과 로그인 정보 폴더도 따로 생긴다. 새 포트로 처음 실행하면 그 Chrome 창에서 네이버 로그인을 한 번 해 둔다.
+- 시작할 때 `Chrome 포트 / 프로필 / 날짜 / 코트` 가 출력되니 두 터미널이 겹치지 않는지 확인한다.
+
 ## 설정 (`reservation.py` 상단 `설정` 블록)
 
 | 변수 | 설명 |
