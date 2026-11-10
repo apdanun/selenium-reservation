@@ -33,35 +33,40 @@ if IS_WINDOWS:
 BIZ_URL = 'https://m.booking.naver.com/booking/10/bizes/217811/items'
 # 예약할 날짜 - 앞에서부터 순서대로 시도
 DATES = [
-    '2026-11-11',
-    '2026-11-18',
+    '2026-12-03',
+    '2026-12-22',
+    '2026-12-29',
+    '2026-12-31',
+    '2026-12-09',
+    '2026-12-23',
+    '2026-12-10',
+    '2026-12-17',
 ]
 # 코트(item id, BIZ_URL 뒤에 붙는 값) - 날짜마다 앞에서부터 시도하고, 한 코트라도 성공하면 다음 날짜로
 COURTS = [
-    '8081115',
+    '8175116',
+    '8175163',
+    '8175126',
+    '8175151',
+    '8175189',
 ]
 
 # 우선순위 희망 시간대 (시작시, 끝시) - 이 슬롯들을 먼저 시도하고, 없으면 나머지 시간대 순차 탐색
 # 6 = 6시
 PREFERRED_SLOTS = [
-    (14,16),
-    (13,15),
-    (15,17),
-    (16,18),
-    (8,10),
-    (7,9),
-    (6,8)
+    (19,21),
+    (18,20)
 ]
 SLOT_HOURS = 2      # 연속 예약 시간 수
-RANGE_START = 6         # 내가 실제로 탐색을 시작할 시간
-RANGE_END = 17      # 전체 예약 가능 끝 시간 (17시 시작 슬롯까지 → 17~19)
+RANGE_START = 18         # 내가 실제로 탐색을 시작할 시간
+RANGE_END = 19      # 전체 예약 가능 끝 시간 (17시 시작 슬롯까지 → 17~19)
 EXCLUDE_HOURS = set(range(11, 13))  # 제외할 시간 (11시, 12시 → 점심시간)
 
 # 예약 시작 시각 (서울 시간) - 이 시각 0~10초 사이에 새로고침 후 예약 시작
 # 9 -> 9시
-RUN_HOUR = 16
+RUN_HOUR = 9
 # 0 -> 0분. 정각
-RUN_MINUTE =26
+RUN_MINUTE = 0
 
 # "이미 예약됨" 같은 안내가 뜨면 기다리지 않고 바로 실패 처리할 문구 (알림창/팝업 안의 글자에 하나라도 포함되면 감지)
 TAKEN_KEYWORDS = ['이미', '다른 사용자', '마감', '예약할 수 없', '예약이 불가', '선택할 수 없']
@@ -69,20 +74,22 @@ TAKEN_KEYWORDS = ['이미', '다른 사용자', '마감', '예약할 수 없', '
 NOT_TAKEN_KEYWORDS = ['네이버페이로 이동', '결제진행', '결제 진행', '로딩']
 
 # 테스트용: True 면 "동의하고 결제하기" 화면까지만 가고 버튼은 누르지 않는다 (실제 예약 시 False 로)
-DRY_RUN = True
+DRY_RUN = False
 
 # Chrome 실행 파일 경로. None 이면 OS 별 기본 설치 경로에서 자동으로 찾는다
 CHROME_PATH = None
 
 # Chrome 디버깅 포트 / 로그인 정보 폴더. 여러 개 동시 실행 시 --port 옵션으로 실행마다 다르게 준다
-CHROME_PORT = 9222
-CHROME_PROFILE = None  # None 이면 포트 9222 → chromeCookie, 그 외 → chromeCookie_<포트>
+# 9222 는 다른 앱(QueryPie 등 Chrome 기반 앱)이 자주 쓰는 포트라 피한다
+CHROME_PORT = 9333
+CHROME_PROFILE = None  # None 이면 기본 포트(CHROME_PORT) → chromeCookie, --port 로 바꾼 포트 → chromeCookie_<포트>
 # ===============================================
 
 def apply_args():
     """실행 옵션으로 위 설정 일부를 덮어쓴다. 옵션을 안 주면 위 설정값 그대로.
     예) python3 reservation.py --port 9223 --dates 2026-11-22,2026-11-29 --courts 8081115"""
     global DATES, COURTS, CHROME_PORT, CHROME_PROFILE
+    default_port = CHROME_PORT
     parser = argparse.ArgumentParser(description='네이버 예약 자동화')
     parser.add_argument('--port', type=int, help=f'Chrome 디버깅 포트 (기본 {CHROME_PORT})')
     parser.add_argument('--profile', help='Chrome 로그인 정보 폴더 이름/경로 (기본: 포트에 따라 자동)')
@@ -99,7 +106,7 @@ def apply_args():
     if args.courts:
         COURTS = split(args.courts)
     if not CHROME_PROFILE:
-        CHROME_PROFILE = 'chromeCookie' if CHROME_PORT == 9222 else f'chromeCookie_{CHROME_PORT}'
+        CHROME_PROFILE = 'chromeCookie' if CHROME_PORT == default_port else f'chromeCookie_{CHROME_PORT}'
 
 apply_args()
 
@@ -179,7 +186,29 @@ def find_chrome():
 # 포트(=Chrome)마다 프로필 폴더가 달라야 한다. 같은 폴더를 Chrome 두 개가 동시에 쓸 수 없음
 CHROME_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), CHROME_PROFILE)
 
-if not is_port_open(CHROME_PORT):
+def keep_awake():
+    """스크립트가 도는 동안 컴퓨터가 자동 잠자기에 들어가지 않게 한다.
+    잠들었다 깨면 Chrome 과의 연결(DevTools)이 끊겨 예약 시각에 실패한다.
+    (맥은 덮개를 닫으면 이것으로도 잠들 수 있으니 열어둘 것)"""
+    try:
+        if IS_MAC:
+            # -i: 유휴 잠자기 방지, -w: 이 스크립트가 끝나면 caffeinate 도 같이 종료
+            subprocess.Popen(['caffeinate', '-i', '-w', str(os.getpid())])
+            print("잠자기 방지 켜짐 (caffeinate)")
+        elif IS_WINDOWS:
+            import ctypes
+            ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+            print("잠자기 방지 켜짐")
+    except Exception as e:
+        print(f"잠자기 방지 설정 실패({type(e).__name__}) - 전원 설정에서 잠자기를 꺼 두세요")
+
+keep_awake()
+
+def launch_chrome():
+    """디버깅 포트가 닫혀 있으면 Chrome 을 띄우고 포트가 열릴 때까지 기다린다 (최대 15초)."""
+    if is_port_open(CHROME_PORT):
+        return
     subprocess.Popen([
         find_chrome(),
         f"--remote-debugging-port={CHROME_PORT}",
@@ -187,24 +216,52 @@ if not is_port_open(CHROME_PORT):
         "--no-first-run",
         "--no-default-browser-check"
     ])
-    # Chrome이 디버깅 포트를 열 때까지 대기 (최대 15초)
     for _ in range(30):
         if is_port_open(CHROME_PORT):
             break
         time.sleep(0.5)
+
+launch_chrome()
 
 option = Options()
 # 위에서 띄운 Chrome 에 붙기만 하므로 add_argument 로 넣는 실행 옵션(user-agent, window-size 등)은 적용되지 않는다.
 # Chrome 실행 옵션이 필요하면 위 subprocess.Popen 인자에 넣을 것.
 option.add_experimental_option("debuggerAddress", f"127.0.0.1:{CHROME_PORT}")
 
-for attempt in range(5):
+def port_owner(port):
+    """포트를 점유한 프로세스 이름 (macOS/Linux 만, 실패 시 None)."""
+    if IS_WINDOWS:
+        return None
     try:
-        driver = webdriver.Chrome(options=option)
-        break
+        out = subprocess.run(['lsof', '-nP', f'-iTCP:{port}', '-sTCP:LISTEN'],
+                             capture_output=True, text=True, timeout=5).stdout.splitlines()
+        return out[1].split()[0] if len(out) > 1 else None
     except Exception:
-        print(f"Chrome 연결 재시도 ({attempt + 1}/5)...")
-        time.sleep(2)
+        return None
+
+def connect_chrome(tries=5):
+    """Chrome 디버깅 포트에 붙은 WebDriver 를 반환. 실패하면 (None, 마지막 예외)."""
+    last_error = None
+    for attempt in range(tries):
+        try:
+            return webdriver.Chrome(options=option), None
+        except Exception as e:
+            last_error = e
+            print(f"Chrome 연결 재시도 ({attempt + 1}/{tries})...")
+            time.sleep(2)
+    return None, last_error
+
+driver, last_error = connect_chrome()
+
+if driver is None:
+    owner = port_owner(CHROME_PORT)
+    print(f"\nChrome 연결 실패: {type(last_error).__name__}: {str(last_error).splitlines()[0] if last_error else ''}")
+    if owner:
+        print(f"포트 {CHROME_PORT} 를 '{owner}' 프로세스가 사용 중입니다. Chrome 이 아니라면 다른 포트로 실행하세요:")
+    else:
+        print("다른 프로그램이 포트를 쓰고 있을 수 있습니다. 다른 포트로 실행해 보세요:")
+    print(f"  python3 reservation.py --port {CHROME_PORT + 1} --profile {CHROME_PROFILE}")
+    raise SystemExit(1)
 
 try:
     driver.maximize_window()
@@ -311,24 +368,69 @@ if len(handles) > 1:
 else:
     driver.switch_to.window(handles[0])
 
-driver.execute_cdp_cmd(
-    "Page.addScriptToEvaluateOnNewDocument",
-    {
-        "source": """
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
-        Object.defineProperty(navigator, 'platform', { get: () => '%s' });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-        """ % ('Win32' if IS_WINDOWS else 'MacIntel')
-    }
-)
+def apply_stealth():
+    driver.execute_cdp_cmd(
+        "Page.addScriptToEvaluateOnNewDocument",
+        {
+            "source": """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
+            Object.defineProperty(navigator, 'platform', { get: () => '%s' });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+            """ % ('Win32' if IS_WINDOWS else 'MacIntel')
+        }
+    )
+
+def wait_page_loaded(timeout=10):
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+
+apply_stealth()
 
 # URL 이동
 driver.get(TARGET_URL)
-WebDriverWait(driver, 10).until(
-    lambda d: d.execute_script("return document.readyState") == "complete"
-)
+wait_page_loaded()
 print(f"현재 URL: {driver.current_url}")
+
+def is_driver_alive():
+    """Chrome 과의 연결이 살아 있는지 (잠자기 후 깨어나면 끊겨 있을 수 있음)."""
+    try:
+        driver.current_url
+        return True
+    except Exception:
+        return False
+
+def reconnect(open_url=None, new_tab=True):
+    """끊긴 연결을 다시 맺는다. new_tab 이면 열려 있는 탭(결제 화면 등)은 건드리지 않고 새 탭을 열어 그 탭으로 전환,
+    아니면 첫 번째 탭을 쓴다 (예약 시작 전).
+    성공하면 True."""
+    global driver
+    print("Chrome 연결이 끊겨 다시 연결합니다...")
+    try:
+        driver.service.stop()  # 끊긴 chromedriver 만 종료 (Chrome 은 그대로)
+    except Exception:
+        pass
+    launch_chrome()  # Chrome 자체가 꺼졌으면 다시 띄움
+    new_driver, error = connect_chrome()
+    if new_driver is None:
+        print(f"Chrome 재연결 실패: {type(error).__name__}")
+        return False
+    driver = new_driver
+    try:
+        if new_tab:
+            driver.switch_to.new_window('tab')
+        else:
+            driver.switch_to.window(driver.window_handles[0])
+        apply_stealth()
+        if open_url:
+            driver.get(open_url)
+            wait_page_loaded()
+        print(f"Chrome 재연결 완료: {driver.current_url}")
+        return True
+    except Exception as e:
+        print(f"Chrome 재연결 후 탭 준비 실패: {type(e).__name__}")
+        return is_driver_alive()
  
 # 서울 시간대 설정
 seoul_tz = pytz.timezone('Asia/Seoul')
@@ -516,6 +618,7 @@ def run_reservations():
     results = []
     first_attempt = True
     reuse_current_tab = True  # 첫 시도는 이미 TARGET_URL 이 열린(새로고침된) 현재 탭 사용
+    reconnects = 0  # 실행 중 Chrome 연결 끊김 재연결 횟수 (무한 반복 방지)
 
     for date in DATES:
         for court in COURTS:
@@ -558,6 +661,12 @@ def run_reservations():
                     keep_tab = True
                     print(f"{date} 코트 {court} {e} - 다음 코트 시도")
                 except Exception as e:
+                    if not is_driver_alive() and reconnects < 3:
+                        # 연결이 끊긴 것이면 다시 붙어서(새 탭) 같은 코트 재시도
+                        reconnects += 1
+                        if reconnect():
+                            reuse_current_tab = True
+                            continue
                     print(f"{date} 코트 {court} 예약 오류:", e)
                 break  # 성공 / 가능한 시간 없음 / 마감 외 오류 → 이 코트는 종료
 
@@ -573,8 +682,14 @@ def run_reservations():
     for date, court in results:
         print(f"  - {date} 코트 {court}")
 
+def near_run_time(now):
+    """예약 시각 1분 전 ~ 예약 시각 분 사이인지."""
+    run = now.replace(hour=RUN_HOUR, minute=RUN_MINUTE, second=0, microsecond=0)
+    return 0 <= (run - now).total_seconds() <= 60 or (now.hour == RUN_HOUR and now.minute == RUN_MINUTE)
+
 # 예약
 keep_going = True
+last_health_check = time.time()
 while keep_going:
     # 현재 시간을 서울 시간으로 확인
     now = datetime.now(seoul_tz)
@@ -583,7 +698,13 @@ while keep_going:
     # 예약 시도
     if now.hour == RUN_HOUR and now.minute == RUN_MINUTE and (now.second >= 0 and now.second <= 10):
         print("일찍 새로고침!")
-        driver.refresh()
+        try:
+            driver.refresh()
+        except Exception as e:
+            print(f"새로고침 실패({type(e).__name__})")
+            if not is_driver_alive() and not reconnect(TARGET_URL, new_tab=False):
+                print("Chrome 에 다시 연결하지 못해 예약을 진행할 수 없습니다.")
+                raise SystemExit(1)
         time.sleep(random.uniform(0.6, 1))
 
         keep_going = False
@@ -592,4 +713,10 @@ while keep_going:
     # 정해진 시간까지 대기
     if keep_going:
         print(f"현재 시간: {now.strftime('%H:%M:%S')} - 대기 중...")
+        # 30초마다 Chrome 연결 확인 → 끊겼으면 예약 시각 전에 미리 다시 연결
+        # (예약 시각 직전 1분은 확인을 건너뛰어 시작이 늦어지지 않게)
+        if time.time() - last_health_check >= 30 and not near_run_time(now):
+            last_health_check = time.time()
+            if not is_driver_alive():
+                reconnect(TARGET_URL, new_tab=False)
     time.sleep(random.choice([0.8, 1, 1.2]))

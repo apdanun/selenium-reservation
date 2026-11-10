@@ -31,8 +31,10 @@ python reservation.py
 ### 공통
 
 - 실행하면 먼저 설정값을 검사하고(`설정 확인 완료: ...` 출력), 문제가 있으면 Chrome 을 띄우기 전에 종료한다.
-- 디버깅 포트(9222)로 Chrome 을 띄우거나 이미 떠 있는 Chrome 에 붙는다. 처음 한 번은 열린 Chrome 에서 네이버 로그인이 되어 있어야 한다.
+- 디버깅 포트(9333)로 Chrome 을 띄우거나 이미 떠 있는 Chrome 에 붙는다. 처음 한 번은 열린 Chrome 에서 네이버 로그인이 되어 있어야 한다.
 - `RUN_HOUR:RUN_MINUTE` 이 될 때까지 대기하다가 0~10초 사이에 새로고침 후 예약을 시작한다.
+- 실행 중에는 자동 잠자기를 막는다(맥 `caffeinate`, 윈도우 전원 API). 맥은 **덮개를 닫으면 그래도 잠들 수 있으니 열어 둔다.**
+- 대기 중 30초마다 Chrome 연결을 확인해서, 잠자기 등으로 끊겼으면 예약 시각 전에 다시 연결한다. 예약 시각 새로고침이나 예약 도중 끊겨도 한 번 더 연결해서 이어간다.
 
 설정 문법만 미리 확인하려면:
 
@@ -46,8 +48,8 @@ python3 -m py_compile reservation.py telegram_notifier.py
 
 | 옵션 | 설명 |
 |---|---|
-| `--port` | Chrome 디버깅 포트 (기본 9222) |
-| `--profile` | Chrome 로그인 정보 폴더 (기본: 9222 → `chromeCookie`, 그 외 → `chromeCookie_<포트>`) |
+| `--port` | Chrome 디버깅 포트 (기본 9333) |
+| `--profile` | Chrome 로그인 정보 폴더 (기본: 9333 → `chromeCookie`, 그 외 → `chromeCookie_<포트>`) |
 | `--dates` | 예약할 날짜, 쉼표 구분 |
 | `--courts` | 코트 id, 쉼표 구분 |
 
@@ -55,7 +57,7 @@ python3 -m py_compile reservation.py telegram_notifier.py
 
 ```bash
 # 터미널 1
-python3 reservation.py --port 9222 --dates 2026-11-07,2026-11-14,2026-11-15
+python3 reservation.py --port 9333 --dates 2026-11-07,2026-11-14,2026-11-15
 # 터미널 2
 python3 reservation.py --port 9223 --dates 2026-11-22,2026-11-29
 ```
